@@ -18,6 +18,7 @@ nodes = {
         "e0": "Schlafzimmer",
         "f8": "Arbeitszimmer",
         "68": "Wohnzimmer",
+        "30": "Musikzimmer",
 }
 
 if raspyrfm_test(2, RFM69):
@@ -90,8 +91,12 @@ while 1:
         if payload["ID"] not in nodes:
             continue
 
-	payload["rssi"] = rxObj[1]
+	payload["RSSI"] = int(rxObj[1])
 	payload["afc"] = rxObj[2]
+        if(sensorData['batlo'] == True):
+            payload["BAT"] = 20
+        else:
+            payload["BAT"] = 100
 	payload["batlo"] = sensorData['batlo']
 	payload["init"] = sensorData["init"]
         payload["room"] = nodes[sensorData['ID']]
@@ -111,61 +116,52 @@ while 1:
                 config["name"]="Temperatur "+payload["room"]
                 config["state_topic"]="home/sensor/"+payload["room"]+"/state"
                 config["value_template"]="{{ float(value_json.T) }}"
-                config["unit_of_measurement"]="C"
-                mqttClient.publish('home/sensor/'+payload["room"]+'T/config',json.dumps(config))
+                config["unit_of_measurement"]=u"\N{DEGREE SIGN}"+"C"
+                mqttClient.publish('home/sensor/'+payload["room"]+'T/config',json.dumps(config), retain=True)
                 config["device_class"]="humidity"
                 config["name"]="Luftfeuchte "+payload["room"]
                 config["value_template"]="{{ value_json.RH }}"
                 config["unit_of_measurement"]="%"
                 config["unique_id"]=payload["ID"]+"_RH"
-                mqttClient.publish('home/sensor/'+payload["room"]+'RH/config',json.dumps(config))
+                mqttClient.publish('home/sensor/'+payload["room"]+'RH/config',json.dumps(config), retain=True)
                 config["device_class"]="signal_strength"
-                config["name"]="Signalqualitaet "+payload["room"]
-                config["value_template"]="{{ value_json.rssi }}"
+                config["name"]="Signal "+payload["room"]
+                config["value_template"]="{{ value_json.RSSI }}" 
                 config["unique_id"]=payload["ID"]+"_RSSI"
                 config["unit_of_measurement"]="dBm"
-                mqttClient.publish('home/sensor/'+payload["room"]+'RSSI/config',json.dumps(config))
+                mqttClient.publish('home/sensor/'+payload["room"]+'RSSI/config',json.dumps(config), retain=True)
+                config["device_class"]="battery"
+                config["name"]="Battery "+payload["room"]
+                config["value_template"]="{{ value_json.BAT }}"
+                config["unique_id"]=payload["ID"]+"_BAT"
+                config["unit_of_measurement"]="%"
+                mqttClient.publish('home/sensor/'+payload["room"]+"BAT/config",json.dumps(config), retain=True)
 
-
-
+        ID=payload["ID"]
         update=False
-        if cache[payload["ID"]]["count"] == 1: 
+        if cache[ID]["count"] == 1: 
                 update=True
-        elif cache[payload["ID"]]["payload"]["T"] != payload["T"]:
+        elif cache[ID]["payload"]["T"] != payload["T"]:
                 update=True
         elif 'RH' in sensorData:
-            if cache[payload["ID"]]["payload"]["RH"] != payload["RH"]:
+            if cache[ID]["payload"]["RH"] != payload["RH"]:
                 update=True
         
-        cache[payload["ID"]]["count"] += 1
+        cache[ID]["count"] += 1
+
+        if cache[ID]["count"] > 2:
+            if abs(cache[ID]["payload"]["T"] - payload["T"]) > 10:
+                update=False
+                print(payload)
+            elif abs(cache[ID]["payload"]["RH"] - payload["RH"]) > 20:
+                update=False
+                print(payload)
 
         if not update:
             continue
 
 	cache[payload["ID"]]["payload"] = payload;
 	cache[payload["ID"]]["ts"] = datetime.now();
-
-	os.system('clear');
-	#print("|ID|    ROOM    |     TIMESTAMP     |COUNT| RSSI| AFC |BAT|INI|  T  |RH|")
-	for key in cache:
-		line = "|";
-		s = cache[key]
-		p = cache[key]["payload"]
-		line += '{:2}|'.format(key)
-		line += '{:12}|'.format("" if (not "room" in p) else p["room"][:12])
-		line += s["ts"].strftime("%Y-%m-%d %H:%M:%S|")
-		line += '{:5}'.format(s["count"]) + '|'
-		line += '{:5}'.format(p["rssi"]) + '|'
-		line += '{:5}'.format(p["afc"]) + '|'
-		line += "LO!|" if p["batlo"] else "OK |"
-		line += " ! |" if p["init"] else "   |"
-		line += '{:5}|'.format(p["T"])
-		if "RH" in p:
-			line += '{:2}|'.format(p["RH"])
-		else:
-			line += '--|'
-		print(line)
-
 
 	try:
 		if mqttClient:
